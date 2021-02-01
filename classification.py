@@ -1,6 +1,7 @@
 """Classification of card attributes."""
 
 import glob
+import math
 import os
 import sys
 
@@ -10,21 +11,33 @@ import numpy as np
 def bicolorize(img_bgr):
     """Convert the card image to use a single color for the shape(s) and white for the card."""
     VALUE_THRESHOLD = 60
-    SATURATION_THRESHOLD = 50
+    SATURATION_THRESHOLD = 40
 
-    # In HSV, determine shape vs. background.
+    # In HSV, determine shape vs. card.
     img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
-    # Assume the first 10 rows are all card coloured.
-    (_, card_s, card_v) = img_hsv[:10,:,:].reshape((-1, 3)).mean(axis=0)
+    # Assume the first 10 rows are all card-coloured.
+    (card_h, card_s, card_v) = img_hsv[:10,:,:].reshape((-1, 3)).mean(axis=0)
 
+    # Build a mask for shape vs. card.
     s = np.abs(img_hsv[:,:,1] - card_s) >= SATURATION_THRESHOLD
     v = np.abs(img_hsv[:,:,2] - card_v) >= VALUE_THRESHOLD
     shape_mask = s | v
 
-    # Normalize the shape to a single colour (and card to white).
-    shape_rgb = img_bgr[shape_mask].reshape((-1, 3)).mean(axis=0)
-    img_bgr[shape_mask] = shape_rgb
+    # Flatten the shape to a single (average + saturated) colour.
+    shape_bgr = img_bgr[shape_mask].reshape((-1, 3)).mean(axis=0)
+
+    # Saturate the shape colour.
+    card_bgr = cv2.cvtColor(np.uint8([[[card_h, card_s, card_v]]]), cv2.COLOR_HSV2BGR)
+    max_c = card_bgr.max()
+    min_c = shape_bgr.min()
+    s = shape_bgr.astype(np.float32)
+    s = 255 * (s - min_c) / (max_c - min_c)
+    s = np.clip(s, 0, 255)
+    shape_bgr = s.astype(np.uint8)
+
+    # Apply the mask and palette.
+    img_bgr[shape_mask] = shape_bgr
     img_bgr[np.invert(shape_mask)] = (255, 255, 255)
 
     return img_bgr
@@ -32,10 +45,24 @@ def bicolorize(img_bgr):
 
 def classify_color(bgr):
     """Given a sample BGR-valued pixel, determine its Set color."""
-    BGR_COLOR_AVGS = {"red": (0, 34, 226), "green": (64, 123, 0), "purple": (89, 0, 76)}
+    BGR_COLOR_AVGS = {
+        "red": (0, 36, 225),
+        "green": (62, 122, 0),
+        "purple": (86, 0, 75)
+    }
+
+    def color_diff(bgr1, bgr2):
+        # From https://www.compuphase.com/cmetric.htm
+        (b1, g1, r1) = bgr1
+        (b2, g2, r2) = bgr2
+        r_mean = (r1 + r2) / 2
+        r = r1 - r2
+        g = g1 - g2
+        b = b1 - b2
+        return math.sqrt((int((512+r_mean)*r*r)>>8) + 4*g*g + (int((767-r_mean)*b*b)>>8))
 
     color_diffs = {
-        c: sum(abs(avg - bgr)) for c, avg in BGR_COLOR_AVGS.items()
+        c: color_diff(bgr, avg) for c, avg in BGR_COLOR_AVGS.items()
     }
     color = min(color_diffs, key=color_diffs.get)
     return color
@@ -90,12 +117,12 @@ def classify_shape(shape_contour):
             return "squiggle"
 
 
-MIN_SHAPE_AREA_FRACTION = 0.1
-
-
 def classify_card(img_bgr):
     """Given a card image, return its Set attributes."""
+    MIN_SHAPE_AREA_FRACTION = 0.1
+
     bicolor = bicolorize(img_bgr)
+    cv2.imwrite("/tmp/bicolor.png", bicolor)
 
     gray = cv2.cvtColor(bicolor, cv2.COLOR_BGR2GRAY)
     # Invert, otherwise RETR_EXTERNAL makes the whole card the largest contour
