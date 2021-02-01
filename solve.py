@@ -56,6 +56,7 @@ SET_COLORS_BGR = [
     [167, 242, 139],
     [139, 167, 242],
     [214, 139, 242],
+    [139, 219, 242],
 ]
 
 def expand_rect(rect, amount):
@@ -89,11 +90,15 @@ def main():
             cv2.polylines(img, [card.rect], True, (52, 64, 255), 10)
             cv2.putText(img, f"{card.label} ({i})", (card.rect[0][0], card.rect[0][1]), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255), 5)
 
-    OUTLINE_WIDTH = 50
     sets = Card.find_sets(cards)
+
+    OUTLINE_WIDTH = 50
+    label_counts = {}
     for i, set_i in enumerate(sets):
         for card in set_i:
-            cv2.polylines(img, [expand_rect(card.rect, i * OUTLINE_WIDTH)], True, SET_COLORS_BGR[i], OUTLINE_WIDTH)
+            labels = label_counts.get(card.attrs, 0)
+            cv2.polylines(img, [expand_rect(card.rect, labels * OUTLINE_WIDTH)], True, SET_COLORS_BGR[i], OUTLINE_WIDTH)
+            label_counts[card.attrs] = labels + 1
 
     cv2.imwrite(f"{sys.argv[2]}.png", img)
 
