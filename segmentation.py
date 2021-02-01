@@ -1,60 +1,20 @@
+"""Segmentation of a board image into cards."""
+
 import copy
 import glob
 import math
 import sys
 
 import cv2
-import imagehash
 import numpy as np
 from shapely.geometry import Polygon
-from PIL import Image
 
-clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
-
-class ReferenceCard:
-    @staticmethod
-    def from_file(file):
-        img = cv2.imread(file)
-        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-        l, a, b = cv2.split(lab)
-        l_corrected = clahe.apply(l)
-        lab_corrected = cv2.merge((l_corrected, a, b))
-        img_rgb = cv2.cvtColor(lab_corrected, cv2.COLOR_LAB2RGB)
-        pil = Image.fromarray(img_rgb)
-        phash = imagehash.phash(pil, hash_size=32)
-        return ReferenceCard(file, phash)
-
-    def __init__(self, name, phash):
-        self.name = name
-        self.phash = phash
 
 class DetectedCard:
-    def __init__(self, img_rgb, rect):
-        pil = Image.fromarray(img_rgb)
-        self.phash = imagehash.phash(pil, hash_size=32)
+    def __init__(self, img_bgr, rect):
+        self.img_bgr = img_bgr
         self.rect = rect
 
-class RefCardSet:
-    @staticmethod
-    def from_files(file_glob):
-        refs = []
-        for f in glob.glob(file_glob):
-            img = ReferenceCard.from_file(f)
-            refs.append(img)
-
-    def __init__(self, refs):
-        self.refs = refs
-
-    def find_best_match(self, detected):
-        min_diff = float('inf')
-        best = None
-        for ref in self.refs:
-            diff = detected.phash - ref.phash
-            print("%s vs %s: diff %s" % (detected.name, ref.name, diff))
-            if diff < min_diff:
-                min_diff = diff
-                best = ref
-        return best
 
 class Line(object):
     def __init__(self, p1, p2):
@@ -277,10 +237,11 @@ def find_rects_from_lines(lines):
 
             output_rects.append(np.array(rect, np.float32))
 
-    return output_rects 
+    return output_rects
 
 
 def order_points(pts):
+    """Return rectangle points in clockwise order from top left."""
     rect = np.zeros((4, 2), np.float32)
     # top left: smallest sum
     # bottom right: largest sum
@@ -296,7 +257,7 @@ def order_points(pts):
 
 
 def find_rects(gray, light):
-    fld = cv2.ximgproc.createFastLineDetector()
+    fld = cv2.ximgproc.createFastLineDetector(_length_threshold=15, _do_merge=True)
     all_lines = []
     for img in [gray, light]:
         img = cv2.medianBlur(img, 9)
@@ -312,16 +273,13 @@ def detect_cards(img):
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    l_corrected = clahe.apply(l)
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    _, s, _ = cv2.split(hsv)
 
-    rgb_corrected = cv2.cvtColor(cv2.merge((l_corrected, a, b)), cv2.COLOR_LAB2RGB)
+    rects = find_rects(gray, s)
 
-    rects = find_rects(gray, l_corrected)
-
-    comp_w = 450
-    comp_h = 750
+    comp_w = 485
+    comp_h = 780
     dst = np.array([
 		[0, 0],
 		[comp_w, 0],
@@ -330,20 +288,16 @@ def detect_cards(img):
 
     cards = []
     for rect in rects:
-        xform = cv2.getPerspectiveTransform(order_points(rect), dst)
-        rect_img = cv2.warpPerspective(rgb_corrected, xform, (comp_w, comp_h))
+        card_rect = order_points(rect)
 
-        rect_orig = (rect * 1/scale).astype(np.int32)
+        xform = cv2.getPerspectiveTransform(card_rect, dst)
+        rect_img = cv2.warpPerspective(img, xform, (comp_w, comp_h), flags=cv2.INTER_NEAREST)
+        # Crop off edges
+        margin_x = 20
+        margin_y = 40
+        rect_img = rect_img[margin_y:-margin_y, margin_x:-margin_x]
+
+        rect_orig = (card_rect * 1/scale).astype(np.int32)
         cards.append(DetectedCard(rect_img, rect_orig))
+
     return cards
-
-
-def main():
-    img = cv2.imread(sys.argv[1])
-    for i, card in enumerate(detect_cards(img)):
-        print(f"Detected card {i} at {card.rect}")
-        cv2.polylines(img, [card.rect], True, (52, 64, 255), 10)
-    cv2.imwrite(f"{sys.argv[2]}.png", img)
-
-if __name__ == "__main__":
-    main()
