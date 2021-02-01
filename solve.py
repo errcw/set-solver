@@ -39,16 +39,15 @@ class Card:
     def find_sets(cards):
         def id(attrs):
             return (attrs[0] << 6) | (attrs[1] << 4) | (attrs[2] << 2) | (attrs[3] << 0)
-        seen_by_id = {}
+        cards_by_id = { id(c.attrs): c for c in cards }
 
         sets = []
         for i, card_i in enumerate(cards):
             for j, card_j in enumerate(cards[i+1:], i+1):
                 third_attrs = [-(a_i + a_j) % 3 for (a_i, a_j) in zip(card_i.attrs, card_j.attrs)]
-                card_k = seen_by_id.get(id(third_attrs))
-                if card_k:
-                    sets.append((card_i, card_j, card_k))
-            seen_by_id[id(card_i.attrs)] = card_i
+                third_card = cards_by_id.get(id(third_attrs))
+                if third_card:
+                    sets.append((card_i, card_j, third_card))
         return sets
 
 SET_COLORS_BGR = [
@@ -82,7 +81,8 @@ def main():
     for i, card_seg in enumerate(segmentation.detect_cards(img)):
 
         classified = classification.classify_card(card_seg.img_bgr)
-        cards.append(Card(classified, card_seg.rect))
+        card = Card(classified, card_seg.rect)
+        cards.append(card)
 
         if debug:
             print(f"Card {i}: {classified}")
@@ -97,7 +97,7 @@ def main():
     for i, set_i in enumerate(sets):
         for card in set_i:
             labels = label_counts.get(card.attrs, 0)
-            cv2.polylines(img, [expand_rect(card.rect, labels * OUTLINE_WIDTH)], True, SET_COLORS_BGR[i], OUTLINE_WIDTH)
+            cv2.polylines(img, [expand_rect(card.rect, labels * OUTLINE_WIDTH)], True, SET_COLORS_BGR[i%4], OUTLINE_WIDTH)
             label_counts[card.attrs] = labels + 1
 
     cv2.imwrite(f"{sys.argv[2]}.png", img)
