@@ -1,110 +1,76 @@
-"""Detection!"""
+"""Classification of card attributes."""
 
 import glob
 import os
 import sys
 
 import cv2
-import imagehash
-from PIL import Image
 import numpy as np
 
-import noteshrink
+def bicolorize(img_bgr):
+    """Convert the card image to use a single color for the shape(s) and white for the card."""
+    VALUE_THRESHOLD = 60
+    SATURATION_THRESHOLD = 50
 
-class CardImage:
-    clahe = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(8, 8))
+    # In HSV, determine shape vs. background.
+    img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
-    @staticmethod
-    def FromFile(file):
-        img = cv2.imread(file)
-        img_rgb = noteshrink_card_from_im(img, file)
+    # Assume the first 10 rows are all card coloured.
+    (_, card_s, card_v) = img_hsv[:10,:,:].reshape((-1, 3)).mean(axis=0)
 
-        pil = Image.fromarray(img_rgb)
-        phash = imagehash.phash(pil, hash_size=24)
-        whash = imagehash.whash(pil, hash_size=32)
+    s = np.abs(img_hsv[:,:,1] - card_s) >= SATURATION_THRESHOLD
+    v = np.abs(img_hsv[:,:,2] - card_v) >= VALUE_THRESHOLD
+    shape_mask = s | v
 
-        # TODO
-        whash = imagehash.phash(pil, hash_size=16)
-        return CardImage(file, phash, whash)
+    # Normalize the shape to a single colour (and card to white).
+    shape_rgb = img_bgr[shape_mask].reshape((-1, 3)).mean(axis=0)
+    img_bgr[shape_mask] = shape_rgb
+    img_bgr[np.invert(shape_mask)] = (255, 255, 255)
 
-    def __init__(self, name, phash, dhash):
-        self.name = name
-        self.phash = phash
-        self.dhash = dhash
-
-    def diff(self, other):
-        return self.dhash - other.dhash
-        #pdiff = self.phash - other.phash
-        #ddiff = self.dhash - other.dhash
-        #return math.hypot(pdiff, ddiff)
+    return img_bgr
 
 
-def noteshrink_card_from_im(card_im):
-    tmp_file = "/tmp/to-noteshrink.tmp.png"
-    cv2.imwrite(tmp_file, card_im)
-    noteshrunk_file = noteshrink_card_from_file(tmp_file)
-    noteshrunk_im = cv2.imread(noteshrunk_file)
-    noteshrunk_im = cv2.cvtColor(noteshrunk_im, cv2.COLOR_BGR2RGB)
-    return noteshrunk_im
+def classify_color(bgr):
+    """Given a sample BGR-valued pixel, determine its Set color."""
+    BGR_COLOR_AVGS = {"red": (0, 34, 226), "green": (64, 123, 0), "purple": (89, 0, 76)}
 
-def noteshrink_card_from_file(card_filename):
-    img, dpi = noteshrink.load(card_filename)
-    options = noteshrink.get_argument_parser(
-        # hack to give a required argument from outside sys.argv
-        filenames=[card_filename]
-    ).parse_args()
-    options.num_colors = 2
-    options.white_bg = True
-    options.quiet = True
-
-    output_filename = "/tmp/did-noteshrink.tmp.png"
-
-    samples = noteshrink.sample_pixels(img, options)
-    palette = noteshrink.get_palette(samples, options)
-
-    labels = noteshrink.apply_palette(img, palette, options)
-
-    noteshrink.save(output_filename, labels, palette, dpi, options)
-    return output_filename
-
-
-def classify_color(rgb):
-    """Given a sample RGB-valued pixel, determine its Set color."""
-    rgb_color_avgs = {"red": (226, 34, 0), "green": (0, 123, 64), "purple": (76, 0, 89)}
     color_diffs = {
-        c: sum(abs(rgb_color_avgs[c] - rgb)) for c in rgb_color_avgs
+        c: sum(abs(avg - bgr)) for c, avg in BGR_COLOR_AVGS.items()
     }
     color = min(color_diffs, key=color_diffs.get)
     return color
 
-def has_color(pixel):
-    return sum(pixel) < 255 * 3
 
 def classify_fill_color(shape_img):
-    #cv2.imwrite("/tmp/shape.png", shape_img)
+    """Given a bicolor image of a shape, determine its color and fill pattern."""
+    SOLID_FILL_THRESHOLD = 0.7
+    LINE_COUNT_THRESHOLD = 5
+
+    # Sample a row half way down the image.
     sample_row = int(shape_img.shape[0] / 2)
 
     fill_count = 0
     line_count = 0
     color = None
-    for i, pixel in enumerate(shape_img[sample_row][1:]):
-        if has_color(pixel):
+    was_shape_pixel = False
+    for pixel in shape_img[sample_row]:
+        is_shape_pixel = sum(pixel) < 255 * 3
+        if is_shape_pixel:
             fill_count += 1
             if not color:
                 color = classify_color(pixel)
-            if not has_color(shape_img[sample_row][i-1]):
+            if not was_shape_pixel:
                 line_count += 1
+        was_shape_pixel = is_shape_pixel
 
     fill_ratio = fill_count / float(shape_img.shape[1])
-    #fills[cur_fill].append(fill_ratio)
-    #print(f"Fraction of nonwhite is {fill_ratio}")
 
     fill = None
-    if fill_ratio > 0.5:
+    if fill_ratio > SOLID_FILL_THRESHOLD:
         fill = "solid"
     else:
         # Distinguish between outline and line
-        if line_count > 5:
+        if line_count > LINE_COUNT_THRESHOLD:
             fill = "stripes"
         else:
             fill = "outline"
@@ -112,6 +78,7 @@ def classify_fill_color(shape_img):
     return (fill, color)
 
 def classify_shape(shape_contour):
+    """Given the contour of a shape, determine its Set shape."""
     perim = cv2.arcLength(shape_contour, closed=True)
     approx = cv2.approxPolyDP(shape_contour, 0.01 * perim, closed=True)
     if len(approx) < 6:
@@ -122,25 +89,15 @@ def classify_shape(shape_contour):
         else:
             return "squiggle"
 
+
 MIN_SHAPE_AREA_FRACTION = 0.1
 
-fills = {
-    "outline": [],
-    "stripes": [],
-    "solid": [],
-}
-counts = {
-    1: "single",
-    2: "double",
-    3: "triple",
-}
-cur_fill = None
-cur_file = None
 
-def classify_card(img):
-    bicolor = noteshrink_card_from_im(img)
+def classify_card(img_bgr):
+    """Given a card image, return its Set attributes."""
+    bicolor = bicolorize(img_bgr)
 
-    gray = cv2.cvtColor(bicolor, cv2.COLOR_RGB2GRAY)
+    gray = cv2.cvtColor(bicolor, cv2.COLOR_BGR2GRAY)
     # Invert, otherwise RETR_EXTERNAL makes the whole card the largest contour
     gray = cv2.bitwise_not(gray)
 
@@ -149,7 +106,7 @@ def classify_card(img):
     classification = {"count": 0}
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
-        if w * h / img.shape[0] * img.shape[1] < MIN_SHAPE_AREA_FRACTION:
+        if (w * h) / (img_bgr.shape[0] * img_bgr.shape[1]) < MIN_SHAPE_AREA_FRACTION:
             continue
         classification["count"] += 1
         if not "fill" in classification:
@@ -163,52 +120,30 @@ def classify_card(img):
     return classification
 
 
-def process_card(file):
-    # global cur_fill, cur_file
-    # cur_fill = os.path.basename(file).split("-")[2]
-    # cur_file = file
-    return classify_card(cv2.imread(file))
-
-def main2():
-    #for f in glob.glob("./img/ref/*.jpg"):
-    #    c = process_card(f)
-    #    n = os.path.basename(f).split("-")
-    #    if n[0] != c["color"]:
-    #        print(f"Mismatched color in {f}")
-    #    if n[1] != counts[c["count"]]:
-    #        print(f"Mismatched count in {f}")
-    #    if n[2] != c["fill"]:
-    #        print(f"Mismatched fill in {f}")
-    #    if os.path.splitext(n[3])[0] != c["shape"]:
-    #        print(f"Mismatched shape in {f}: {n[3]} vs {c['shape']}")
-
-    #for f, c in fills.items():
-    #    print(f"mean {f} = {np.mean(c)}")
-    #    print(f"median {f} = {np.median(c)}")
-    #    print(f"std {f} = {np.std(c)}")
-    #    print(f"max {f} = {np.max(c)}")
-    #    print(f"min {f} = {np.min(c)}")
-
-    process_card(sys.argv[1])
-
 def main():
-    refs = []
-    for f in glob.glob("./img/ref/*.jpg"):
-        img = CardImage.FromFile(f)
-        refs.append(img)
+    def process_card(file):
+        return classify_card(cv2.imread(file))
+    if len(sys.argv) > 1:
+        for f in sys.argv[1:]:
+            process_card(f)
+    else:
+        counts = {
+            1: "single",
+            2: "double",
+            3: "triple",
+        }
+        for f in glob.glob("./img/ref/*.jpg"):
+            c = process_card(f)
+            n = os.path.basename(f).split("-")
+            if n[0] != c["color"]:
+                print(f"Mismatched color in {f}")
+            if n[1] != counts[c["count"]]:
+                print(f"Mismatched count in {f}")
+            if n[2] != c["fill"]:
+                print(f"Mismatched fill in {f}")
+            if os.path.splitext(n[3])[0] != c["shape"]:
+                print(f"Mismatched shape in {f}: {n[3]} vs {c['shape']}")
 
-    test = CardImage.FromFile(sys.argv[1])
-
-    min_diff = float('inf')
-    best = None
-    for ref in refs:
-        #diff = test.phash - ref.phash
-        diff = test.diff(ref)
-        print(f"{test.name} vs {ref.name}: diff={diff}")
-        if diff < min_diff:
-            min_diff = diff
-            best = ref
-    print(f"Best for {test.name} is {best.name} (diff={min_diff})")
 
 if __name__ == "__main__":
-    main2()
+    main()
