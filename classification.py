@@ -8,27 +8,31 @@ import sys
 import cv2
 import numpy as np
 
+
 def bicolorize(img_bgr):
     """Convert the card image to use a single color for the shape(s) and white for the card."""
+    # NB: These values are pretty sensitive: need to be low to pick up fuzzy stripes, but too
+    # low and then the edge of the shape interferes with getting a good contour.
     VALUE_THRESHOLD = 60
-    SATURATION_THRESHOLD = 40
+    SATURATION_THRESHOLD = 35
 
     # In HSV, determine shape vs. card.
     img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
     # Assume the first 10 rows are all card-coloured.
-    (card_h, card_s, card_v) = img_hsv[:10,:,:].reshape((-1, 3)).mean(axis=0)
+    (card_h, card_s, card_v) = img_hsv[:10, :, :].reshape((-1, 3)).mean(axis=0)
 
     # Build a mask for shape vs. card.
-    s = np.abs(img_hsv[:,:,1] - card_s) >= SATURATION_THRESHOLD
-    v = np.abs(img_hsv[:,:,2] - card_v) >= VALUE_THRESHOLD
+    s = np.abs(img_hsv[:, :, 1] - card_s) >= SATURATION_THRESHOLD
+    v = np.abs(img_hsv[:, :, 2] - card_v) >= VALUE_THRESHOLD
     shape_mask = s | v
 
     # Flatten the shape to a single (average + saturated) colour.
     shape_bgr = img_bgr[shape_mask].reshape((-1, 3)).mean(axis=0)
 
     # Saturate the shape colour.
-    card_bgr = cv2.cvtColor(np.uint8([[[card_h, card_s, card_v]]]), cv2.COLOR_HSV2BGR)
+    card_bgr = cv2.cvtColor(
+        np.uint8([[[card_h, card_s, card_v]]]), cv2.COLOR_HSV2BGR)
     max_c = card_bgr.max()
     min_c = shape_bgr.min()
     s = shape_bgr.astype(np.float32)
@@ -59,7 +63,7 @@ def classify_color(bgr):
         r = r1 - r2
         g = g1 - g2
         b = b1 - b2
-        return math.sqrt((int((512+r_mean)*r*r)>>8) + 4*g*g + (int((767-r_mean)*b*b)>>8))
+        return math.sqrt((int((512+r_mean)*r*r) >> 8) + 4*g*g + (int((767-r_mean)*b*b) >> 8))
 
     color_diffs = {
         c: color_diff(bgr, avg) for c, avg in BGR_COLOR_AVGS.items()
@@ -104,6 +108,7 @@ def classify_fill_color(shape_img):
 
     return (fill, color)
 
+
 def classify_shape(shape_contour):
     """Given the contour of a shape, determine its Set shape."""
     perim = cv2.arcLength(shape_contour, closed=True)
@@ -128,7 +133,8 @@ def classify_card(img_bgr):
     # Invert, otherwise RETR_EXTERNAL makes the whole card the largest contour
     gray = cv2.bitwise_not(gray)
 
-    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     classification = {"count": 0}
     for c in contours:
@@ -143,7 +149,6 @@ def classify_card(img_bgr):
         if not "shape" in classification:
             classification["shape"] = classify_shape(c)
 
-    print(f"Card: {classification}")
     return classification
 
 

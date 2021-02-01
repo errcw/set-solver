@@ -199,8 +199,6 @@ def find_rects_from_lines(lines):
 
         return [width, height]
 
-    print("Evaluating %d potential rectangles" % len(potential_rects))
-
     widths = []
     heights = []
     aspects = []
