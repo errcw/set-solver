@@ -207,8 +207,10 @@ def find_rects_from_lines(lines):
 
     for potential_rect in sorted(potential_rects):
         cost, cycle = potential_rect
+
         if widths and cost > sum(widths) / len(widths) * 2:
             break
+
         unique = True
         for idx in cycle:
             if idx in out_line_indices:
