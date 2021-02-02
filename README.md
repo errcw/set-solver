@@ -2,13 +2,13 @@
 
 Identifies sets of [SET](https://en.wikipedia.org/wiki/Set_(card_game)) cards in images.
 
-![Solved set](./img/solved/d_small.png)
+![Solved set](./img/solved/b_small.jpg)
 
 ## Use
 
 Install preequisites into a virtual environment:
 ```
-python3 -m virtualenv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
