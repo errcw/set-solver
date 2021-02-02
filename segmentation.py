@@ -272,30 +272,36 @@ def detect_cards(img):
     img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, sat, _ = cv2.split(cv2.cvtColor(img, cv2.COLOR_BGR2HSV))
 
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    _, s, _ = cv2.split(hsv)
-
-    rects = find_rects(gray, s)
-
-    comp_w = 485
-    comp_h = 780
-    dst = np.array([
-		[0, 0],
-		[comp_w, 0],
-		[comp_w, comp_h],
-		[0, comp_h]], np.float32)
+    rects = find_rects(gray, sat)
 
     cards = []
     for rect in rects:
         card_rect = order_points(rect)
 
+        sideways = (card_rect[1][0] - card_rect[0][0]) > (card_rect[2][1] - card_rect[1][1])
+
+        card_w = 240
+        card_h = 390
+        if sideways:
+            card_w = 390
+            card_h = 240
+
+        dst = np.array([
+            [0, 0],
+            [card_w, 0],
+            [card_w, card_h],
+            [0, card_h]], np.float32)
+
         xform = cv2.getPerspectiveTransform(card_rect, dst)
-        rect_img = cv2.warpPerspective(img, xform, (comp_w, comp_h), flags=cv2.INTER_NEAREST)
+        rect_img = cv2.warpPerspective(img, xform, (card_w, card_h), flags=cv2.INTER_NEAREST)
         # Crop off edges
-        margin_x = 20
-        margin_y = 40
+        margin_x = 10
+        margin_y = 20
         rect_img = rect_img[margin_y:-margin_y, margin_x:-margin_x]
+        if sideways:
+            rect_img = cv2.rotate(rect_img, cv2.ROTATE_90_CLOCKWISE)
 
         rect_orig = (card_rect * 1/scale).astype(np.int32)
         cards.append(DetectedCard(rect_img, rect_orig))
