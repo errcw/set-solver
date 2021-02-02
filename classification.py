@@ -19,8 +19,9 @@ def bicolorize(img_bgr):
     # In HSV, determine shape vs. card.
     img_hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
 
-    # Assume the first 10 rows are all card-coloured.
-    (card_h, card_s, card_v) = img_hsv[:10, :, :].reshape((-1, 3)).mean(axis=0)
+    # Assume the first and last rows are all card-coloured.
+    card_sample = np.vstack((img_hsv[:15, :, :], img_hsv[-15:, :, :])).reshape((-1, 3))
+    (card_h, card_s, card_v) = card_sample.mean(axis=0)
 
     # Build a mask for shape vs. card.
     s = np.abs(img_hsv[:, :, 1] - card_s) >= SATURATION_THRESHOLD
@@ -31,8 +32,7 @@ def bicolorize(img_bgr):
     shape_bgr = img_bgr[shape_mask].reshape((-1, 3)).mean(axis=0)
 
     # Saturate the shape colour.
-    card_bgr = cv2.cvtColor(
-        np.uint8([[[card_h, card_s, card_v]]]), cv2.COLOR_HSV2BGR)
+    card_bgr = cv2.cvtColor(np.uint8([[[card_h, card_s, card_v]]]), cv2.COLOR_HSV2BGR)
     max_c = card_bgr.max()
     min_c = shape_bgr.min()
     s = shape_bgr.astype(np.float32)
@@ -126,15 +126,14 @@ def classify_card(img_bgr):
     """Given a card image, return its Set attributes."""
     MIN_SHAPE_AREA_FRACTION = 0.1
 
-    bicolor = bicolorize(img_bgr)
+    bicolor = bicolorize(img_bgr.copy())
     cv2.imwrite("/tmp/bicolor.png", bicolor)
 
     gray = cv2.cvtColor(bicolor, cv2.COLOR_BGR2GRAY)
     # Invert, otherwise RETR_EXTERNAL makes the whole card the largest contour
     gray = cv2.bitwise_not(gray)
 
-    contours, _ = cv2.findContours(
-        gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     classification = {"count": 0}
     for c in contours:
@@ -154,7 +153,10 @@ def classify_card(img_bgr):
 
 def main():
     def process_card(file):
-        return classify_card(cv2.imread(file))
+        c = classify_card(cv2.imread(file))
+        print(f"{c}")
+        return c
+
     if len(sys.argv) > 1:
         for f in sys.argv[1:]:
             process_card(f)
