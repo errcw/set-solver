@@ -37,7 +37,7 @@ class Card:
         color = classified["color"]
         shape = classified["shape"]
         self.attrs = (Card.COUNTS[count], Card.FILLS[fill], Card.COLORS[color], Card.SHAPES[shape])
-        self.label = f"{count}-{fill}-{color}-{shape}-{id}"
+        self.label = f"{count}-{fill}-{color}-{shape}"
         self.rect = rect
 
     @staticmethod
@@ -86,7 +86,6 @@ def main():
 
     cards = []
     for i, card_seg in enumerate(segmentation.detect_cards(img)):
-
         classified = classification.classify_card(card_seg.img_bgr)
         card = Card(classified, card_seg.rect)
         cards.append(card)
