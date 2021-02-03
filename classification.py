@@ -127,7 +127,6 @@ def classify_card(img_bgr):
     MIN_SHAPE_AREA_FRACTION = 0.1
 
     bicolor = bicolorize(img_bgr.copy())
-    cv2.imwrite("/tmp/bicolor.png", bicolor)
 
     gray = cv2.cvtColor(bicolor, cv2.COLOR_BGR2GRAY)
     # Invert, otherwise RETR_EXTERNAL makes the whole card the largest contour
@@ -154,7 +153,7 @@ def classify_card(img_bgr):
 def main():
     def process_card(file):
         c = classify_card(cv2.imread(file))
-        print(f"{c}")
+        print(f"{file}: {c}")
         return c
 
     if len(sys.argv) > 1:
