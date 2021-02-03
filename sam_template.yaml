@@ -1,0 +1,46 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SAM Template for deploying SET solver on AWS
+
+Globals:
+  Function:
+    Timeout: 3
+  Api:
+    BinaryMediaTypes: ['*~1*']
+
+Resources:
+  SetSolverApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: Prod
+      BinaryMediaTypes:
+        - image~1jpeg
+        - image~1jpg
+  SetSolverFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Events:
+        SetSolver:
+          Type: Api 
+          Properties:
+            Path: /solve
+            Method: post
+            RestApiId:
+              SetSolverApiGateway
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: .
+      DockerTag: python3.8-v1
+
+Outputs:
+  SetSolverApi:
+    Description: "API Gateway endpoint URL for Prod stage for Set Solver function"
+    Value: !Sub "https://${ServerlessRestApi}.execute-api.${AWS::Region}.amazonaws.com/Prod/solve/"
+  SetSolverFunction:
+    Description: "Set Solver Lambda Function ARN"
+    Value: !GetAtt SetSolverFunction.Arn
+  SetSolverFunctionIamRole:
+    Description: "Implicit IAM Role created for Set Solver function"
+    Value: !GetAtt SetSolverFunctionRole.Arn

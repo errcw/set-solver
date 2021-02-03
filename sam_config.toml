@@ -1,0 +1,11 @@
+version = 0.1
+[default]
+[default.deploy]
+[default.deploy.parameters]
+stack_name = "set-solver"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-lcnqd2qwq378"
+s3_prefix = "set-solver"
+region = "us-east-2"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+image_repositories = ["SetSolverFunction=592871311314.dkr.ecr.us-east-2.amazonaws.com/set-solver"]
