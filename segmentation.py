@@ -269,6 +269,7 @@ def find_rects(gray, light):
 
 def detect_cards(img):
     min_dim = min(img.shape[0], img.shape[1])
+    scale = 1.0
     if min_dim > 1024:
         scale = 1024.0 / min_dim
         img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
