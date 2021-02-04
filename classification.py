@@ -13,7 +13,7 @@ def bicolorize(img_bgr):
     """Convert the card image to use a single color for the shape(s) and white for the card."""
     # NB: These values are pretty sensitive: need to be low to pick up fuzzy stripes, but too
     # low and then the edge of the shape interferes with getting a good contour.
-    VALUE_THRESHOLD = 60
+    VALUE_THRESHOLD = 50
     SATURATION_THRESHOLD = 35
 
     # In HSV, determine shape vs. card.
@@ -44,7 +44,7 @@ def bicolorize(img_bgr):
     img_bgr[shape_mask] = shape_bgr
     img_bgr[np.invert(shape_mask)] = (255, 255, 255)
 
-    return img_bgr
+    return (img_bgr, shape_bgr)
 
 
 def classify_color(bgr):
@@ -72,9 +72,9 @@ def classify_color(bgr):
     return color
 
 
-def classify_fill_color(shape_img):
+def classify_fill(shape_img):
     """Given a bicolor image of a shape, determine its color and fill pattern."""
-    SOLID_FILL_THRESHOLD = 0.7
+    SOLID_FILL_THRESHOLD = 0.9
     LINE_COUNT_THRESHOLD = 5
 
     # Sample a row half way down the image.
@@ -82,31 +82,25 @@ def classify_fill_color(shape_img):
 
     fill_count = 0
     line_count = 0
-    color = None
     was_shape_pixel = False
     for pixel in shape_img[sample_row]:
         is_shape_pixel = sum(pixel) < 255 * 3
         if is_shape_pixel:
             fill_count += 1
-            if not color:
-                color = classify_color(pixel)
             if not was_shape_pixel:
                 line_count += 1
         was_shape_pixel = is_shape_pixel
 
     fill_ratio = fill_count / float(shape_img.shape[1])
 
-    fill = None
     if fill_ratio > SOLID_FILL_THRESHOLD:
-        fill = "solid"
+        return "solid"
     else:
         # Distinguish between outline and line
         if line_count > LINE_COUNT_THRESHOLD:
-            fill = "stripes"
+            return "stripes"
         else:
-            fill = "outline"
-
-    return (fill, color)
+            return "outline"
 
 
 def classify_shape(shape_contour):
@@ -126,7 +120,7 @@ def classify_card(img_bgr):
     """Given a card image, return its Set attributes."""
     MIN_SHAPE_AREA_FRACTION = 0.1
 
-    bicolor = bicolorize(img_bgr.copy())
+    (bicolor, shape_bgr) = bicolorize(img_bgr.copy())
 
     gray = cv2.cvtColor(bicolor, cv2.COLOR_BGR2GRAY)
     # Invert, otherwise RETR_EXTERNAL makes the whole card the largest contour
@@ -134,18 +128,32 @@ def classify_card(img_bgr):
 
     contours, _ = cv2.findContours(gray, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    classification = {"count": 0}
+    classification = {
+        "count": 0,
+        "color": classify_color(shape_bgr)
+    }
+
+    # Perform shape and fill classification where we have the most pixels to work with.
+    best_shape = None
+    best_contour = None
+    best_pixels = 0
+
     for c in contours:
         x, y, w, h = cv2.boundingRect(c)
         if (w * h) / (img_bgr.shape[0] * img_bgr.shape[1]) < MIN_SHAPE_AREA_FRACTION:
             continue
         classification["count"] += 1
-        if not "fill" in classification:
-            (fill, color) = classify_fill_color(bicolor[y:y+h, x:x+w])
-            classification["fill"] = fill
-            classification["color"] = color
-        if not "shape" in classification:
-            classification["shape"] = classify_shape(c)
+
+        shape = bicolor[y:y+h, x:x+w]
+
+        pixels = np.count_nonzero(shape == shape_bgr) # Technically x3, one per component.
+        if pixels > best_pixels:
+            best_shape = shape
+            best_contour = c
+            best_pixels = pixels
+
+    classification["fill"] = classify_fill(best_shape)
+    classification["shape"] = classify_shape(best_contour)
 
     return classification
 
