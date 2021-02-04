@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">Set Solver</string>
+    <string name="scan">Scan</string>
+    <string name="camera_permission_rationale">This app requires camera access to operate</string>
+    <string name="camera_permission_denied_explanation">You denied camera permission which the app
+        requires to operate. If you selected "don't ask again" then you need to use Settings to
+        re-enable the permission.</string>
+    <string name="ok">OK</string>
+    <string name="settings">Settings</string>
+    <string name="unexpected_failure">Encountered an unexpected failure</string>
+</resources>
