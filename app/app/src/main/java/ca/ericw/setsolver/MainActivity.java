@@ -1,6 +1,7 @@
 package ca.ericw.setsolver;
 
 import android.Manifest;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -9,12 +10,10 @@ import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
-import android.graphics.RectF;
-import android.graphics.drawable.Drawable;
-import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
+import android.provider.MediaStore;
 import android.provider.Settings;
 import android.util.ArrayMap;
 import android.util.Log;
@@ -25,6 +24,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.FileProvider;
+import androidx.exifinterface.media.ExifInterface;
 
 import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.Request;
@@ -38,8 +38,10 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.util.ArrayList;
@@ -75,7 +77,7 @@ public class MainActivity extends AppCompatActivity {
 
   private RequestQueue httpQueue;
 
-  private String photoPath;
+  private Uri photoUri;
   private Bitmap photoBitmap;
   private Map<String, Rect> detectedCards;
 
@@ -100,24 +102,18 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private void onScanClick(View v) {
-    try {
-      // Reset previous state.
-      photoPath = null;
-      photoBitmap = null;
-      detectedCards = null;
+    // Reset previous state.
+    photoUri = null;
+    photoBitmap = null;
+    detectedCards = null;
 
-      // Capture a new photo.
-      File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
-      File image = File.createTempFile("cap_", ".jpg", storageDir);
-      photoPath = image.getAbsolutePath();
-      Uri uri = FileProvider.getUriForFile(
-          this,
-          "ca.ericw.setsolver.fileprovider",
-          image);
-      capturePhoto.launch(uri);
-    } catch (IOException e) {
-      showUnexpectedFailureSnackbar("Failure creating temp image", e);
-    }
+    // Capture a new photo.
+    ContentValues contentValues = new ContentValues();
+    contentValues.put(MediaStore.MediaColumns.DISPLAY_NAME, "SET Solver Photo");
+    contentValues.put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg");
+    contentValues.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DCIM);
+    photoUri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues);
+    capturePhoto.launch(photoUri);
   }
 
   private boolean onImageTouch(View v, MotionEvent e) {
@@ -185,15 +181,24 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private byte[] readCapturedPhoto() throws IOException{
-    byte[] jpegBytes = Files.readAllBytes(FileSystems.getDefault().getPath(photoPath));
+    // Read the raw JPEG bytes (which will eventually be uploaded).
+    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+    InputStream is = getContentResolver().openInputStream(photoUri);
+    int readBytes;
+    byte[] buf = new byte[16384];
+    while ((readBytes = is.read(buf, 0, buf.length)) != -1) {
+      bos.write(buf, 0, readBytes);
+    }
+    byte[] jpegBytes = bos.toByteArray();
 
+    // Convert the JPEG into a drawable bitmap.
     BitmapFactory.Options bmOptions = new BitmapFactory.Options();
     bmOptions.inMutable = true; // Allow the overlay to be drawn.
     photoBitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length, bmOptions);
 
     // Rotate if necessary. Server-side OpenCV will rotate the image based on this same metadata
     // so any results we get will be transformed with this rotation.
-    ExifInterface exif = new ExifInterface(photoPath);
+    ExifInterface exif = new ExifInterface(getContentResolver().openInputStream(photoUri));
     int rotation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
     switch (rotation) {
       case ExifInterface.ORIENTATION_ROTATE_90:
