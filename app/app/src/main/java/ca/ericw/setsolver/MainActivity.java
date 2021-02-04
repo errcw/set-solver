@@ -53,7 +53,7 @@ import ca.ericw.setsolver.databinding.ActivityMainBinding;
 
 public class MainActivity extends AppCompatActivity {
 
-  private static final String SOLVE_URL = "https://ffkbmc379f.execute-api.us-east-2.amazonaws.com/Prod/solve";
+  private static final String SOLVE_URL = "https://ek1g5zsq39.execute-api.us-east-2.amazonaws.com/Prod/solve";
 
   private static final int[] SET_HIGHLIGHT_COLORS = new int[] {
       Color.rgb(139, 214, 242),
