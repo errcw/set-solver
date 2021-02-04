@@ -87,14 +87,12 @@ def main():
     cards = []
     for i, card_seg in enumerate(segmentation.detect_cards(img)):
         classified = classification.classify_card(card_seg.img_bgr)
-        card = Card(classified, card_seg.rect)
-        cards.append(card)
+        cards.append(Card(classified, card_seg.rect))
 
         if debug:
             print(f"Card {i}: {classified}")
             cv2.imwrite(f"{sys.argv[2]}.rects.{i}.png", card_seg.img_bgr)
-            cv2.polylines(img, [card.rect], True, (52, 64, 255), 10)
-            cv2.putText(img, f"{card.label} ({i})", (card.rect[0][0], card.rect[0][1]), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255), 5)
+
 
     sets = Card.find_sets(cards)
 
@@ -106,7 +104,13 @@ def main():
             cv2.polylines(img, [expand_rect(card.rect, labels * OUTLINE_WIDTH)], True, SET_COLORS_BGR[i], OUTLINE_WIDTH)
             label_counts[card.attrs] = labels + 1
 
+    if debug:
+        for i, card in enumerate(cards):
+            cv2.polylines(img, [card.rect], True, (52, 64, 255), 10)
+            cv2.putText(img, f"{card.label} ({i})", (card.rect[0][0], card.rect[0][1]), cv2.FONT_HERSHEY_PLAIN, 2, (255, 255, 255), 5)
+
     cv2.imwrite(f"{sys.argv[2]}.png", img)
+
 
 if __name__ == "__main__":
     main()
