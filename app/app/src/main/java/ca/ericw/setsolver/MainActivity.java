@@ -4,12 +4,21 @@ import android.Manifest;
 import android.content.Intent;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Matrix;
+import android.graphics.Paint;
+import android.graphics.Rect;
+import android.graphics.RectF;
+import android.graphics.drawable.Drawable;
+import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.Settings;
-import android.transition.Visibility;
+import android.util.ArrayMap;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
 
 import androidx.activity.result.ActivityResultLauncher;
@@ -20,30 +29,39 @@ import androidx.core.content.FileProvider;
 import com.android.volley.DefaultRetryPolicy;
 import com.android.volley.Request;
 import com.android.volley.RequestQueue;
-import com.android.volley.RetryPolicy;
 import com.android.volley.VolleyError;
-import com.android.volley.VolleyLog;
 import com.android.volley.toolbox.JsonObjectRequest;
 import com.android.volley.toolbox.Volley;
 import com.google.android.material.snackbar.Snackbar;
 
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
-import java.net.URL;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
-import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 
 import ca.ericw.setsolver.databinding.ActivityMainBinding;
 
 public class MainActivity extends AppCompatActivity {
 
   private static final String SOLVE_URL = "https://ffkbmc379f.execute-api.us-east-2.amazonaws.com/Prod/solve";
+
+  private static final int[] SET_HIGHLIGHT_COLORS = new int[] {
+      Color.rgb(139, 214, 242),
+      Color.rgb(139, 242, 167),
+      Color.rgb(242, 167, 139),
+      Color.rgb(242, 139, 214),
+      Color.rgb(242, 219, 139),
+      Color.rgb(123, 247, 222)
+  };
+  private static final int SET_HIGHLIGHT_WIDTH = 50;
 
   private final ActivityResultLauncher<Uri> capturePhoto = registerForActivityResult(
       new ActivityResultContracts.TakePicture(),
@@ -54,9 +72,12 @@ public class MainActivity extends AppCompatActivity {
       this::onCameraPermissionResult);
 
   private ActivityMainBinding binding;
+
   private RequestQueue httpQueue;
 
-  private String capturedPhotoPath;
+  private String photoPath;
+  private Bitmap photoBitmap;
+  private Map<String, Rect> detectedCards;
 
   @Override
   protected void onCreate(Bundle savedInstanceState) {
@@ -66,6 +87,7 @@ public class MainActivity extends AppCompatActivity {
     setContentView(binding.getRoot());
 
     binding.scan.setOnClickListener(this::onScanClick);
+    binding.imageView.setOnTouchListener(this::onImageTouch);
 
     httpQueue = Volley.newRequestQueue(this);
   }
@@ -74,14 +96,20 @@ public class MainActivity extends AppCompatActivity {
   protected void onStart() {
     super.onStart();
     requestPermission.launch(Manifest.permission.CAMERA);
-    resetButtonState();
+    enableScanButton();
   }
 
   private void onScanClick(View v) {
     try {
+      // Reset previous state.
+      photoPath = null;
+      photoBitmap = null;
+      detectedCards = null;
+
+      // Capture a new photo.
       File storageDir = getExternalFilesDir(Environment.DIRECTORY_PICTURES);
       File image = File.createTempFile("cap_", ".jpg", storageDir);
-      capturedPhotoPath = image.getAbsolutePath();
+      photoPath = image.getAbsolutePath();
       Uri uri = FileProvider.getUriForFile(
           this,
           "ca.ericw.setsolver.fileprovider",
@@ -90,6 +118,28 @@ public class MainActivity extends AppCompatActivity {
     } catch (IOException e) {
       showUnexpectedFailureSnackbar("Failure creating temp image", e);
     }
+  }
+
+  private boolean onImageTouch(View v, MotionEvent e) {
+    if (e.getAction() == MotionEvent.ACTION_DOWN && detectedCards != null) {
+      Matrix inverse = new Matrix();
+      binding.imageView.getImageMatrix().invert(inverse);
+      float[] touchPts = new float[] {e.getX(), e.getY()};
+      inverse.mapPoints(touchPts);
+
+      int touchX = (int) touchPts[0];
+      int touchY = (int) touchPts[1];
+      Log.d("SetSolver", "X=" + touchX + ", Y=" + touchY);
+
+      for (Map.Entry<String, Rect> card : detectedCards.entrySet()) {
+        if (card.getValue().contains(touchX, touchY)) {
+          binding.cardLabel.setText(card.getKey());
+        }
+      }
+    } else if (e.getAction() == MotionEvent.ACTION_UP) {
+      binding.cardLabel.setText("");
+    }
+    return true;
   }
 
   private void onCameraPermissionResult(boolean granted) {
@@ -123,71 +173,51 @@ public class MainActivity extends AppCompatActivity {
 
   private void onTakePhotoResult(boolean success) {
     if (success) {
-      binding.scan.setVisibility(View.INVISIBLE);
-      binding.progressBar.setVisibility(View.VISIBLE);
-
-      showCapturedPhoto();
-      byte[] jpeg = getScaledJpegBytes();
-      if (jpeg != null) {
-        sendHttpSolveRequest(jpeg);
+      disableScanButton();
+      try {
+        sendHttpSolveRequest(readCapturedPhoto());
+      } catch (IOException e) {
+        showUnexpectedFailureSnackbar("Failure reading captured photo", e);
       }
     } else {
       showUnexpectedFailureSnackbar("Failure capturing photo", null);
     }
   }
 
-  private void showCapturedPhoto() {
+  private byte[] readCapturedPhoto() throws IOException{
+    byte[] jpegBytes = Files.readAllBytes(FileSystems.getDefault().getPath(photoPath));
+
     BitmapFactory.Options bmOptions = new BitmapFactory.Options();
-    bmOptions.inJustDecodeBounds = true;
-    BitmapFactory.decodeFile(capturedPhotoPath, bmOptions);
+    bmOptions.inMutable = true; // Allow the overlay to be drawn.
+    photoBitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length, bmOptions);
 
-    int scaleFactor = Math.max(
-        1,
-        Math.min(
-            bmOptions.outWidth / binding.imageView.getWidth(),
-            bmOptions.outHeight / binding.imageView.getHeight()));
+    // Rotate if necessary. Server-side OpenCV will rotate the image based on this same metadata
+    // so any results we get will be transformed with this rotation.
+    ExifInterface exif = new ExifInterface(photoPath);
+    int rotation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+    switch (rotation) {
+      case ExifInterface.ORIENTATION_ROTATE_90:
+        photoBitmap = rotateBitmap(photoBitmap, 90);
+        break;
+      case ExifInterface.ORIENTATION_ROTATE_180:
+        photoBitmap = rotateBitmap(photoBitmap, 180);
+        break;
+      case ExifInterface.ORIENTATION_ROTATE_270:
+        photoBitmap = rotateBitmap(photoBitmap, 270);
+        break;
+      default:
+        break;
+    }
 
-    bmOptions.inJustDecodeBounds = false;
-    bmOptions.inSampleSize = scaleFactor;
+    binding.imageView.setImageBitmap(photoBitmap);
 
-    Bitmap bitmap = BitmapFactory.decodeFile(capturedPhotoPath, bmOptions);
-    binding.imageView.setImageBitmap(bitmap);
+    return jpegBytes;
   }
 
-  private byte[] getScaledJpegBytes() {
-    try {
-      return Files.readAllBytes(FileSystems.getDefault().getPath(capturedPhotoPath));
-    } catch (IOException e) {
-      showUnexpectedFailureSnackbar("Failure reading JPEG", e);
-      return null;
-    }
-
-    /* TODO: Can we realistically reduce bandwidth?
-
-    BitmapFactory.Options bmOptions = new BitmapFactory.Options();
-    Bitmap bitmap = BitmapFactory.decodeFile(capturedPhotoPath, bmOptions);
-
-    int outWidth = bitmap.getWidth();
-    int outHeight = bitmap.getHeight();
-
-    int minDim = Math.min(bitmap.getWidth(), bitmap.getHeight());
-    if (minDim > 1024) {
-      double scale = 1024.0 / minDim;
-      outWidth = (int)(bitmap.getWidth() * scale);
-      outHeight = (int)(bitmap.getHeight() * scale);
-    }
-
-    Bitmap scaled = Bitmap.createScaledBitmap(bitmap, outWidth, outHeight, true);
-    Log.e("SetSolver", "Outputting to " + outWidth + " x " + outHeight);
-    ByteArrayOutputStream bos = new ByteArrayOutputStream();
-    scaled.compress(Bitmap.CompressFormat.JPEG, 75, bos);
-    byte[] b = bos.toByteArray();
-
-    Bitmap bb = BitmapFactory.decodeByteArray(b, 0, b.length);
-    binding.imageView.setImageBitmap(bitmap);
-
-    return b;
-    */
+  private static Bitmap rotateBitmap(Bitmap img, int degrees) {
+    Matrix matrix = new Matrix();
+    matrix.postRotate(degrees);
+    return Bitmap.createBitmap(img, 0, 0, img.getWidth(), img.getHeight(), matrix, true);
   }
 
   private void sendHttpSolveRequest(byte[] jpeg) {
@@ -212,13 +242,57 @@ public class MainActivity extends AppCompatActivity {
   }
 
   private void onHttpSuccessResponse(JSONObject response) {
-    Log.e("SetSolver", response.toString());
-    resetButtonState();
+    Log.d("SetSolver", "Solve response: " + response);
+    try {
+      detectedCards = new ArrayMap<>(12);
+
+      JSONObject cardMap = response.getJSONObject("cards");
+      Iterator<String> cardLabels = cardMap.keys();
+      while (cardLabels.hasNext()) {
+        String cardLabel = cardLabels.next();
+        JSONArray cardArray = cardMap.getJSONArray(cardLabel);
+        int left = cardArray.getJSONArray(0).getInt(0);
+        int top = cardArray.getJSONArray(0).getInt(1);
+        int right = cardArray.getJSONArray(2).getInt(0);
+        int bottom = cardArray.getJSONArray(2).getInt(1);
+        detectedCards.put(cardLabel, new Rect(left, top, right, bottom));
+      }
+
+      Map<String, List<Integer>> sets = new ArrayMap<>(12);
+      JSONArray setsArray = response.getJSONArray("sets");
+      for (int s = 0; s < setsArray.length(); s++) {
+        JSONArray set = setsArray.getJSONArray(s);
+        sets.computeIfAbsent(set.getString(0), k -> new ArrayList<>()).add(s);
+        sets.computeIfAbsent(set.getString(1), k -> new ArrayList<>()).add(s);
+        sets.computeIfAbsent(set.getString(2), k -> new ArrayList<>()).add(s);
+      }
+
+      Canvas canvas = new Canvas(photoBitmap);
+      Paint paint = new Paint();
+      paint.setStrokeWidth(SET_HIGHLIGHT_WIDTH);
+      paint.setStyle(Paint.Style.STROKE);
+
+      for (Map.Entry<String, List<Integer>> e : sets.entrySet()) {
+        Rect drawRect = new Rect(detectedCards.get(e.getKey()));
+        for (int s : e.getValue()) {
+          paint.setColor(SET_HIGHLIGHT_COLORS[s]);
+          canvas.drawRect(drawRect, paint);
+          drawRect.inset(-SET_HIGHLIGHT_WIDTH, -SET_HIGHLIGHT_WIDTH);
+        }
+      }
+
+      binding.imageView.setImageBitmap(photoBitmap);
+    } catch (JSONException e) {
+      showUnexpectedFailureSnackbar("Failure parsing HTTP response", e);
+    }
+
+    enableScanButton();
   }
 
   private void onHttpErrorResponse(VolleyError error) {
+    Log.d("SetSolver", "Solve error response: " + error);
     showUnexpectedFailureSnackbar("Failure in HTTP response", null);
-    resetButtonState();
+    enableScanButton();
   }
 
   private void showUnexpectedFailureSnackbar(String logMessage, Exception e) {
@@ -226,7 +300,12 @@ public class MainActivity extends AppCompatActivity {
     Snackbar.make(binding.getRoot(), R.string.unexpected_failure, Snackbar.LENGTH_LONG).show();
   }
 
-  private void resetButtonState() {
+  private void disableScanButton() {
+    binding.scan.setVisibility(View.INVISIBLE);
+    binding.progressBar.setVisibility(View.VISIBLE);
+  }
+
+  private void enableScanButton() {
     binding.scan.setVisibility(View.VISIBLE);
     binding.progressBar.setVisibility(View.INVISIBLE);
   }
